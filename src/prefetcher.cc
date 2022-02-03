@@ -11,6 +11,8 @@ uint64_t log2_int(int number);
 
 #define N_INDEX_BITS log2_int(TABLE_SIZE)
 
+#define PREFETCH_DEGREE (4)
+
 typedef struct mht_1 {
   uint8_t valid;
   Addr tag;
@@ -27,7 +29,6 @@ typedef struct mht_2 {
 int8_t PREF_INITIALIZED = 0;
 
 Addr premiss = 0;
-
 Addr pre2miss = 0;
 
 static mht_1 miss_history_1[TABLE_SIZE] = {0};
@@ -48,10 +49,6 @@ void prefetch_init(void) {
   }
 }
 
-uint8_t is_triggering_action(AccessStat stat) {
-  return stat.miss || (!stat.miss && get_prefetch_bit(stat.mem_addr));
-}
-
 uint64_t get_mht_index(Addr addr) {
   uint64_t mask = 1 << N_INDEX_BITS;
   mask -= 1;
@@ -66,6 +63,10 @@ uint64_t log2_int(int number) {
   return targetlevel;
 }
 
+uint8_t is_triggering_action(AccessStat stat) {
+  return stat.miss || (!stat.miss && get_prefetch_bit(stat.mem_addr));
+}
+
 void prefetch_access(AccessStat stat) {
   if (is_triggering_action(stat)) {
     // Prefetch next prediction address if in table
@@ -77,8 +78,24 @@ void prefetch_access(AccessStat stat) {
     // Check mh2 first, then mh1
     if (mht_2_entry.valid && mht_2_entry.tag1 == stat.mem_addr &&
         mht_2_entry.tag2 == premiss) {
-      // todo add support for prefetch degree > 1
+
       issue_prefetch(mht_2_entry.prediction);
+      Addr next_working_addr = stat.mem_addr ^ mht_2_entry.prediction;
+      Addr latest_prediction = mht_2_entry.prediction;
+
+      for (uint8_t i = 1; i < PREFETCH_DEGREE; i++) {
+        uint64_t next_mht_2_index = get_mht_index(next_working_addr);
+        mht_2 next_mht_2_entry = miss_history_2[next_mht_2_index];
+        Addr next_predicted_addr = next_mht_2_entry.prediction;
+        next_working_addr = latest_prediction ^ next_mht_2_entry.prediction;
+
+        if (!next_mht_2_entry.valid) {
+          break;
+        }
+
+        issue_prefetch(next_predicted_addr);
+        latest_prediction = next_predicted_addr;
+      }
     } else if (mht_1_entry.valid && mht_1_entry.tag == stat.mem_addr) {
       issue_prefetch(mht_1_entry.prediction);
     }

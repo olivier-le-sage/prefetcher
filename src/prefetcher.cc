@@ -5,8 +5,9 @@
  */
 
 #include "interface.hh"
+uint64_t log2_int(int number);
 
-#define TABLE_SIZE 64
+#define TABLE_SIZE 1024
 
 #define N_INDEX_BITS log2_int(TABLE_SIZE)
 
@@ -36,22 +37,24 @@ void prefetch_init(void) {
   /* Called before any calls to prefetch_access. */
   /* This is the place to initialize data structures. */
 
-  // DPRINTF(HWPrefetch, "Initialized sequential-on-access prefetcher\n");
   if (!PREF_INITIALIZED) {
     for (int i = 0; i < TABLE_SIZE; i++) {
       miss_history_1[i].valid = 0;
       miss_history_2[i].valid = 0;
     }
     PREF_INITIALIZED = 1;
+    DPRINTF(HWPrefetch, "Initialized domino\n");
+    DPRINTF(HWPrefetch, "Index size: %d\n", N_INDEX_BITS);
   }
 }
 
 uint8_t is_triggering_action(AccessStat stat) {
-  return stat.miss || !stat.miss && get_prefetch_bit(stat.mem_addr);
+  return stat.miss || (!stat.miss && get_prefetch_bit(stat.mem_addr));
 }
 
 uint64_t get_mht_index(Addr addr) {
   uint64_t mask = 1 << N_INDEX_BITS;
+  mask -= 1;
   return addr & mask;
 }
 

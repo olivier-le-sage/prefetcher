@@ -14,7 +14,7 @@
 
 #define PSM_SIZE 16384 * 256
 
-#define PREFETCH_DEGREE 1
+#define PREFETCH_DEGREE 8
 
 typedef struct training_line {
   Addr context;
@@ -70,6 +70,11 @@ void prefetch_access(AccessStat stat) {
   DPRINTF(HWPrefetch, "Current address: %x\n", stat.mem_addr);
   if (training_unit[pc_index].context == stat.pc &&
       training_unit[pc_index].last_addr != stat.mem_addr) {
+    int stride = stat.mem_addr - training_unit[pc_index].last_addr;
+    if (stride == training_unit[pc_index].stride)
+      issue_prefetch(stat.mem_addr + stride);
+    training_unit[pc_index].stride = stride;
+
     // Correlated pair observed, check psm
     Addr a = training_unit[pc_index].last_addr;
     Addr b = stat.mem_addr;
@@ -152,6 +157,7 @@ void prefetch_access(AccessStat stat) {
   }
   training_unit[pc_index].context = stat.pc;
   training_unit[pc_index].last_addr = stat.mem_addr;
+  training_unit[pc_index].stride = 0;
 
   // Prefetching
   // TODO implement prefetching for degree > 1

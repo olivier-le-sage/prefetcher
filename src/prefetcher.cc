@@ -10,18 +10,18 @@
 #define FILTER_TABLE_SIZE 64
 #define PHT_SIZE 1024
 
-#define N_REGION_BLOCKS 1
+#define N_REGION_BLOCKS 128
 
 struct filter_table_row {
   Addr tag;
   Addr pc;
-  uint32_t offset;
+  uint64_t offset;
 };
 
 struct acc_table_row {
   Addr tag;
   Addr pc;
-  uint32_t offset;
+  uint64_t offset;
   uint64_t pattern;
 };
 
@@ -75,28 +75,28 @@ int get_filter_table_index(Addr addr) {
 }
 
 // Returns the offset from region base in number of cache blocks
-uint32_t get_block_offset(Addr addr) {
+uint64_t get_block_offset(Addr addr) {
   int region_size = N_REGION_BLOCKS * BLOCK_SIZE;
   int region_offset = addr % region_size;
-  return region_offset;
+  return region_offset / BLOCK_SIZE;
 }
 
 void prefetch_init(void) {
   /* Called before any calls to prefetch_access. */
   /* This is the place to initialize data structures. */
 
-  DPRINTF(HWPrefetch, "Initialized sequential-memory-stream prefetcher\n");
+  // DPRINTF(HWPrefetch, "Initialized sequential-memory-stream prefetcher\n");
 }
 
 void assign_to_filter_entry(struct filter_table_row *row, Addr tag, Addr pc,
-                            uint32_t offset) {
+                            uint64_t offset) {
   row->tag = tag;
   row->pc = pc;
   row->offset = offset;
 }
 
 void assign_to_acc_entry(struct acc_table_row *row, Addr tag, Addr pc,
-                         uint32_t offset, uint64_t pattern) {
+                         uint64_t offset, uint64_t pattern) {
   row->tag = tag;
   row->pc = pc;
   row->offset = offset;
@@ -118,7 +118,7 @@ void add_to_filter_table(AccessStat stat) {
 }
 
 void add_to_pattern_table(struct acc_table_row *acc_row) {
-  DPRINTF(HWPrefetch, "Added to pattern table\n");
+  // DPRINTF(HWPrefetch, "Added to pattern table\n");
   Addr prediction_tag = acc_row->pc ^ acc_row->offset;
   int index = get_index(prediction_tag, log2_int(PHT_SIZE));
   pht_row *pht_row = &pht[index];
@@ -178,7 +178,7 @@ void train_unit(AccessStat stat) {
   if (index != -1) {
     int block_offset = get_block_offset(stat.mem_addr);
     // Update pattern
-    DPRINTF(HWPrefetch, "Update pattern\n");
+    // DPRINTF(HWPrefetch, "Update pattern\n");
     acc_table[index].pattern |= 1 << block_offset;
     return;
   }
@@ -190,6 +190,7 @@ void train_unit(AccessStat stat) {
     add_to_filter_table(stat);
     return;
   }
+  // DPRINTF(HWPrefetch, "Move to filter table\n");
   struct filter_table_row *row = &filter_table[index];
   // If same block, do nothing
   if (row->offset == get_block_offset(stat.mem_addr))
@@ -200,18 +201,22 @@ void train_unit(AccessStat stat) {
 }
 
 void prediction_unit(AccessStat stat) {
-  uint32_t offset = get_block_offset(stat.mem_addr);
+  uint64_t offset = get_block_offset(stat.mem_addr);
   Addr base = get_region_base(stat.mem_addr);
   Addr prediction_tag = stat.pc ^ offset;
   int index = get_index(prediction_tag, log2_int(PHT_SIZE));
   pht_row *row = &pht[index];
   if (row->tag != prediction_tag || !row->pattern)
     return;
-  DPRINTF(HWPrefetch, "PREFETCH\n");
+  // DPRINTF(HWPrefetch, "PREFETCH\n");
   uint64_t pattern = row->pattern;
+  int max_stream_len = 16;
   for (int i = 0; i < 64; i++) {
-    if ((1 << i) & pattern) {
-      issue_prefetch(base + i);
+    Addr prefetch_candiate = base + i * BLOCK_SIZE;
+    if (((1 << i) & pattern) && !in_cache(prefetch_candiate) &&
+        !in_mshr_queue(prefetch_candiate) && max_stream_len) {
+      issue_prefetch(prefetch_candiate);
+      max_stream_len--;
     }
   }
 }

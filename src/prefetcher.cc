@@ -72,7 +72,7 @@ static void m_populate_unused_rpt_entry(uint32_t rpt_index, AccessStat stat)
     }
 
     m_rpt[i].tag = stat.pc;
-    m_rpt[i].prev_addr = stat.mem;
+    m_rpt[i].prev_addr = stat.mem_addr;
     m_rpt[i].state = RPT_STATE_INITIAL;
     m_rpt[i].stride = 0;
 }
@@ -133,7 +133,7 @@ void prefetch_access(AccessStat stat)
                 }
                 case RPT_STATE_TRANSIENT:
                 {
-                    if (m_is_effective_address_correct(rpt_index, stat))
+                    if (m_is_effective_address_correct(rpt_index, stat.mem_addr))
                     {
                         m_rpt[rpt_index].prev_addr = stat.mem_addr;
                         m_rpt[rpt_index].state = RPT_STATE_STEADY;
@@ -151,7 +151,7 @@ void prefetch_access(AccessStat stat)
                 }
                 case RPT_STATE_STEADY:
                 {
-                    if (m_is_effective_address_correct(rpt_index, stat))
+                    if (m_is_effective_address_correct(rpt_index, stat.mem_addr))
                     {
                         m_rpt[rpt_index].prev_addr = stat.mem_addr;
                     }
@@ -165,7 +165,7 @@ void prefetch_access(AccessStat stat)
                     break;
                 }
                 case RPT_STATE_NO_PREDICTION:
-                    if (m_is_effective_address_correct(rpt_index, stat))
+                    if (m_is_effective_address_correct(rpt_index, stat.mem_addr))
                     {
                         m_rpt[rpt_index].prev_addr = stat.mem_addr;
                         m_rpt[rpt_index].state = RPT_STATE_TRANSIENT;
@@ -177,7 +177,6 @@ void prefetch_access(AccessStat stat)
                     }
                     break;
                 default:
-                    ASSERT(false);
                     break;
             }
         }

@@ -1,23 +1,21 @@
-/*
- * A sample prefetcher which does sequential one-block lookahead.
- * This means that the prefetcher fetches the next block _after_ the one that
- * was just accessed. It also ignores requests to blocks already in the cache.
- */
-
 #include "interface.hh"
 #include <stdio.h>
+#include <string.h>
 
 #define ACC_TABLE_SIZE 64
 #define FILTER_TABLE_SIZE 64
 #define PHT_SIZE 1024
 
-#define N_REGION_BLOCKS 64
+#define N_REGION_BLOCKS 2
 
 typedef uint32_t bitmap_t;
 
 #define BITS_PER_WORD (sizeof(bitmap_t) * 8)
 #define WORD_OFFSET(b) ((b) / BITS_PER_WORD)
 #define BIT_OFFSET(b) ((b) % BITS_PER_WORD)
+
+#define BITMAP_SIZE                                                            \
+  (N_REGION_BLOCKS > BITS_PER_WORD ? N_REGION_BLOCKS / BITS_PER_WORD : 1)
 
 struct filter_table_row {
   Addr tag;
@@ -29,13 +27,13 @@ struct acc_table_row {
   Addr tag;
   Addr pc;
   uint64_t offset;
-  bitmap_t pattern[N_REGION_BLOCKS / BITS_PER_WORD];
+  bitmap_t pattern[BITMAP_SIZE];
 };
 
 struct pht_row {
   Addr pc;
   uint64_t offset;
-  bitmap_t pattern[N_REGION_BLOCKS / BITS_PER_WORD];
+  bitmap_t pattern[BITMAP_SIZE];
 };
 
 int acc_index = 0;
@@ -48,8 +46,12 @@ void set_bit(bitmap_t *bitmap, int bit) {
   bitmap[WORD_OFFSET(bit)] |= 1 << BIT_OFFSET(bit);
 }
 
+void clear_bit(bitmap_t *bitmap, int bit) {
+  bitmap[WORD_OFFSET(bit)] &= ~(1 << BIT_OFFSET(bit));
+}
+
 void copy_bitmap(bitmap_t *dest, bitmap_t *src) {
-  for (int i = 0; i < N_REGION_BLOCKS / BITS_PER_WORD; i++) {
+  for (int i = 0; i < BITMAP_SIZE; i++) {
     dest[i] = src[i];
   }
 }
@@ -106,6 +108,16 @@ int get_pht_index(AccessStat stat) {
   return index;
 }
 
+int get_matching_pht_row(Addr addr) {
+  int index = -1;
+  uint64_t offset = get_block_offset(addr);
+  for (int i = 0; i < PHT_SIZE; i++) {
+    if (pht[i].offset == offset)
+      index = i;
+  }
+  return index;
+}
+
 int get_filter_table_index(Addr addr) {
   int index = -1;
   Addr tag = get_region_base(addr);
@@ -146,8 +158,9 @@ void add_to_filter_table(AccessStat stat) {
         filter_table[i].offset == 0)
       index = i;
   }
-  if (index == -1)
+  if (index == -1) {
     index = 0;
+  }
   assign_to_filter_entry(&filter_table[index], get_region_base(stat.mem_addr),
                          stat.pc, get_block_offset(stat.mem_addr));
 }
@@ -178,7 +191,7 @@ void add_to_accumulation_table(struct filter_table_row *filter_row,
     index = acc_index;
     acc_index = acc_index == ACC_TABLE_SIZE - 1 ? 0 : acc_index + 1;
   }
-  bitmap_t pattern[N_REGION_BLOCKS / BITS_PER_WORD] = {0};
+  bitmap_t pattern[BITMAP_SIZE] = {0};
   // printf("Original offset: %lu New offset: %lu\n", filter_row->offset,
   //    get_block_offset(stat.mem_addr));
   set_bit(pattern, filter_row->offset);
@@ -192,8 +205,8 @@ void add_to_accumulation_table(struct filter_table_row *filter_row,
 void handle_evictions(AccessStat stat) {
   for (int i = 0; i < FILTER_TABLE_SIZE; i++) {
     struct filter_table_row *row = &filter_table[i];
-    if (row->tag == get_region_base(stat.mem_addr))
-      continue;
+    // if (row->tag == get_region_base(stat.mem_addr))
+    //  continue;
     // Only check of non-empty entries
     if (row->tag == 0 && row->pc == 0 && row->offset == 0)
       continue;
@@ -211,9 +224,11 @@ void handle_evictions(AccessStat stat) {
     // Only check of non-empty entries
     if (row->tag == 0 && row->pc == 0 && row->offset == 0)
       continue;
+    /*
     if (row->tag != get_region_base(stat.mem_addr))
       continue;
-    for (int j = 0; j < N_REGION_BLOCKS; j++) {
+    */
+    for (int j = row->offset; j < N_REGION_BLOCKS; j++) {
       int curr_offset = get_bit(row->pattern, j);
       Addr block_addr = row->tag + j * BLOCK_SIZE;
       if (!curr_offset)
@@ -224,7 +239,7 @@ void handle_evictions(AccessStat stat) {
         // printf("Eviction %lx in cache: %d in queue: %d\n", block_addr,
         // in_cache(block_addr), in_mshr_queue(block_addr));
         add_to_pattern_table(row);
-        bitmap_t empty_bitmap[N_REGION_BLOCKS / BITS_PER_WORD] = {0};
+        bitmap_t empty_bitmap[BITMAP_SIZE] = {0};
         assign_to_acc_entry(row, 0, 0, 0, empty_bitmap);
         break;
       }
@@ -274,15 +289,7 @@ void prediction_unit(AccessStat stat) {
   pht_row *row = &pht[index];
   if (index == -1)
     return;
-  // DPRINTF(HWPrefetch, "PREFETCH\n");
-  // printf("Base: %lx\n", base);
-  // printf("Trigger: %lx\n", stat.mem_addr);
-  // printf("Pattern: ");
-  for (int i = 0; i < N_REGION_BLOCKS / BITS_PER_WORD; i++) {
-    // printf("%x", row->pattern[i]);
-  }
-  // printf("\n");
-  int max_stream_len = 8;
+  int max_stream_len = 2;
   int n_prefetches = 0;
   for (int i = 0; i < N_REGION_BLOCKS; i++) {
     Addr prefetch_candiate = base + i * BLOCK_SIZE;
@@ -303,8 +310,9 @@ void prefetch_access(AccessStat stat) {
   // printf("Access to: %lx from pc: %lx\n", stat.mem_addr, stat.pc);
   train_unit(stat);
   prediction_unit(stat);
-  // if (get_prefetch_bit(stat.mem_addr))
-  // printf("Successful prefetch at addr: %lx\n", stat.mem_addr);
+  if (get_prefetch_bit(stat.mem_addr)) {
+    // printf("Success\n");
+  }
 }
 
 void prefetch_complete(Addr addr) {

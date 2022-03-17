@@ -211,8 +211,8 @@ void handle_evictions(AccessStat stat) {
     // Only check of non-empty entries
     if (row->tag == 0 && row->pc == 0 && row->offset == 0)
       continue;
-    if (row->tag != get_region_base(stat.mem_addr))
-      continue;
+    // if (row->tag != get_region_base(stat.mem_addr))
+    // continue;
     for (int j = 0; j < N_REGION_BLOCKS; j++) {
       int curr_offset = get_bit(row->pattern, j);
       Addr block_addr = row->tag + j * BLOCK_SIZE;
@@ -282,7 +282,7 @@ void prediction_unit(AccessStat stat) {
     // printf("%x", row->pattern[i]);
   }
   // printf("\n");
-  int max_stream_len = 8;
+  int max_stream_len = 1;
   int n_prefetches = 0;
   for (int i = 0; i < N_REGION_BLOCKS; i++) {
     Addr prefetch_candiate = base + i * BLOCK_SIZE;

@@ -7,11 +7,11 @@
 #include "interface.hh"
 uint64_t log2_int(int number);
 
-#define TABLE_SIZE 1024
+#define TABLE_SIZE 1048576 
 
 #define N_INDEX_BITS log2_int(TABLE_SIZE)
 
-#define PREFETCH_DEGREE (4)
+#define PREFETCH_DEGREE (1)
 
 typedef struct mht_1 {
   uint8_t valid;
